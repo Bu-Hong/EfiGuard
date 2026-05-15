@@ -1,11 +1,38 @@
 name: Build EfiGuard
 
+# 仅支持手动触发
 on:
-  push:
-    branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
   workflow_dispatch:
+    inputs:
+      build_configuration:
+        description: '构建配置'
+        required: true
+        default: 'RELEASE'
+        type: choice
+        options:
+          - RELEASE
+          - DEBUG
+          - BOTH
+      edk2_version:
+        description: 'EDK2 版本'
+        required: true
+        default: 'edk2-stable202308'
+        type: choice
+        options:
+          - edk2-stable202308
+          - edk2-stable202311
+          - edk2-stable202405
+          - edk2-stable202408
+      create_release:
+        description: '是否创建 Release 发布'
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: 'Release 标签 (例如: v1.0.0)，仅当勾选创建 Release 时生效'
+        required: false
+        default: 'v1.0.0'
+        type: string
 
 jobs:
   # ============================================================
@@ -22,11 +49,11 @@ jobs:
           path: edk2/EfiGuardPkg
           submodules: recursive
 
-      - name: Checkout EDK2
+      - name: Checkout EDK2 (${{ inputs.edk2_version }})
         uses: actions/checkout@v4
         with:
           repository: tianocore/edk2
-          ref: edk2-stable202308
+          ref: ${{ inputs.edk2_version }}
           path: edk2
           submodules: recursive
 
@@ -51,6 +78,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
       - name: Build EfiGuard (RELEASE)
+        if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
         shell: cmd
         working-directory: edk2
         run: |
@@ -59,6 +87,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
       - name: Build EfiGuard (DEBUG)
+        if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
         shell: cmd
         working-directory: edk2
         run: |
@@ -70,10 +99,11 @@ jobs:
         shell: cmd
         working-directory: edk2
         run: |
-          dir /s /b Build\EfiGuard\RELEASE_VS2019\X64\*.efi
-          dir /s /b Build\EfiGuard\DEBUG_VS2019\X64\*.efi
+          if exist Build\EfiGuard\RELEASE_VS2019\X64 dir /s /b Build\EfiGuard\RELEASE_VS2019\X64\*.efi
+          if exist Build\EfiGuard\DEBUG_VS2019\X64 dir /s /b Build\EfiGuard\DEBUG_VS2019\X64\*.efi
 
       - name: Upload EFI artifacts (RELEASE)
+        if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
         uses: actions/upload-artifact@v4
         with:
           name: EfiGuard-EFI-RELEASE
@@ -82,6 +112,7 @@ jobs:
             edk2/Build/EfiGuard/RELEASE_VS2019/X64/Loader.efi
 
       - name: Upload EFI artifacts (DEBUG)
+        if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
         uses: actions/upload-artifact@v4
         with:
           name: EfiGuard-EFI-DEBUG
@@ -96,11 +127,6 @@ jobs:
     name: Build EfiDSEFix (MSBuild)
     runs-on: windows-2022
     
-    strategy:
-      matrix:
-        configuration: [Release, Debug]
-        platform: [x64]
-    
     steps:
       - name: Checkout EfiGuard
         uses: actions/checkout@v4
@@ -110,18 +136,23 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore NuGet packages (if any)
-        run: |
-          if (Test-Path "EfiGuard.sln") {
-            nuget restore EfiGuard.sln -ErrorAction SilentlyContinue
-          }
-        continue-on-error: true
-
-      - name: Build EfiDSEFix
+      - name: Build EfiDSEFix (RELEASE)
+        if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
         run: |
           msbuild EfiGuard.sln `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform=${{ matrix.platform }} `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            /m `
+            /t:EfiDSEFix
+        shell: pwsh
+
+      - name: Build EfiDSEFix (DEBUG)
+        if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
+        run: |
+          msbuild EfiGuard.sln `
+            /p:Configuration=Debug `
+            /p:Platform=x64 `
             /p:WindowsTargetPlatformVersion=10.0 `
             /m `
             /t:EfiDSEFix
@@ -132,22 +163,32 @@ jobs:
           Get-ChildItem -Path "Application/EfiDSEFix/bin" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
         shell: pwsh
 
-      - name: Upload EfiDSEFix artifact
+      - name: Upload EfiDSEFix artifact (RELEASE)
+        if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
         uses: actions/upload-artifact@v4
         with:
-          name: EfiDSEFix-${{ matrix.configuration }}-${{ matrix.platform }}
+          name: EfiDSEFix-Release-x64
           path: |
-            Application/EfiDSEFix/bin/**/EfiDSEFix.exe
-            Application/EfiDSEFix/bin/**/EfiDSEFix.pdb
+            Application/EfiDSEFix/bin/x64/Release/EfiDSEFix.exe
+            Application/EfiDSEFix/bin/x64/Release/EfiDSEFix.pdb
+
+      - name: Upload EfiDSEFix artifact (DEBUG)
+        if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: EfiDSEFix-Debug-x64
+          path: |
+            Application/EfiDSEFix/bin/x64/Debug/EfiDSEFix.exe
+            Application/EfiDSEFix/bin/x64/Debug/EfiDSEFix.pdb
 
   # ============================================================
-  # Job 3: 打包发布 (仅在 tag 推送时触发)
+  # Job 3: 打包发布 (仅当用户手动勾选时触发)
   # ============================================================
   release:
     name: Create Release
     needs: [build-efi, build-dsefix]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ inputs.create_release == true }}
     permissions:
       contents: write
     
@@ -164,22 +205,28 @@ jobs:
         run: |
           mkdir -p release/EfiGuard
           
-          # 复制 RELEASE 版本的 EFI 文件
-          cp artifacts/EfiGuard-EFI-RELEASE/EfiGuardDxe.efi release/EfiGuard/
-          cp artifacts/EfiGuard-EFI-RELEASE/Loader.efi release/EfiGuard/
+          # 复制 RELEASE 版本的 EFI 文件（如果存在）
+          if [ -d "artifacts/EfiGuard-EFI-RELEASE" ]; then
+            cp artifacts/EfiGuard-EFI-RELEASE/EfiGuardDxe.efi release/EfiGuard/ 2>/dev/null || true
+            cp artifacts/EfiGuard-EFI-RELEASE/Loader.efi release/EfiGuard/ 2>/dev/null || true
+          fi
           
           # 复制 EfiDSEFix.exe (Release x64)
-          find artifacts/EfiDSEFix-Release-x64 -name "EfiDSEFix.exe" -exec cp {} release/EfiGuard/ \;
+          if [ -d "artifacts/EfiDSEFix-Release-x64" ]; then
+            find artifacts/EfiDSEFix-Release-x64 -name "EfiDSEFix.exe" -exec cp {} release/EfiGuard/ \;
+          fi
           
           # 创建压缩包
           cd release
-          zip -r EfiGuard-${{ github.ref_name }}.zip EfiGuard/
+          zip -r EfiGuard-${{ inputs.release_tag }}.zip EfiGuard/
           ls -la
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/EfiGuard-*.zip
+          tag_name: ${{ inputs.release_tag }}
+          name: EfiGuard ${{ inputs.release_tag }}
           draft: false
           prerelease: false
           generate_release_notes: true
