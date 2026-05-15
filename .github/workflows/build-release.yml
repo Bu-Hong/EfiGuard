@@ -120,7 +120,7 @@ jobs:
             edk2/Build/EfiGuard/DEBUG_VS2019/X64/EfiGuardDxe.efi
             edk2/Build/EfiGuard/DEBUG_VS2019/X64/Loader.efi
 
-  # ============================================================
+   # ============================================================
   # Job 2: 使用 MSBuild 构建 EfiDSEFix.exe
   # ============================================================
   build-dsefix:
@@ -136,32 +136,74 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Detect available Platform Toolset
+        id: toolset
+        shell: pwsh
+        run: |
+          # 列出已安装的 VC 工具集
+          $vcToolsPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC"
+          if (Test-Path $vcToolsPath) {
+            Write-Host "Available MSVC versions:"
+            Get-ChildItem $vcToolsPath | ForEach-Object { Write-Host "  - $($_.Name)" }
+          }
+          
+          # 列出已安装的 Platform Toolsets
+          $toolsetPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC"
+          if (Test-Path $toolsetPath) {
+            Write-Host "Available Platform Toolsets:"
+            Get-ChildItem $toolsetPath -Directory | ForEach-Object { Write-Host "  - $($_.Name)" }
+          }
+          
+          # 使用 v143 作为默认（VS2022 通用工具集）
+          echo "PLATFORM_TOOLSET=v143" >> $env:GITHUB_OUTPUT
+
+      - name: Detect Windows SDK Version
+        id: sdk
+        shell: pwsh
+        run: |
+          $sdkPath = "C:\Program Files (x86)\Windows Kits\10\Include"
+          if (Test-Path $sdkPath) {
+            $sdkVersions = Get-ChildItem $sdkPath -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending
+            Write-Host "Available Windows SDK versions:"
+            $sdkVersions | ForEach-Object { Write-Host "  - $($_.Name)" }
+            $latestSdk = $sdkVersions | Select-Object -First 1
+            echo "SDK_VERSION=$($latestSdk.Name)" >> $env:GITHUB_OUTPUT
+            Write-Host "Selected SDK: $($latestSdk.Name)"
+          }
+
       - name: Build EfiDSEFix (RELEASE)
         if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
+        shell: pwsh
         run: |
           msbuild EfiGuard.sln `
             /p:Configuration=Release `
             /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion=10.0 `
+            /p:PlatformToolset=${{ steps.toolset.outputs.PLATFORM_TOOLSET }} `
+            /p:WindowsTargetPlatformVersion=${{ steps.sdk.outputs.SDK_VERSION }} `
             /m `
             /t:EfiDSEFix
-        shell: pwsh
 
       - name: Build EfiDSEFix (DEBUG)
         if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
+        shell: pwsh
         run: |
           msbuild EfiGuard.sln `
             /p:Configuration=Debug `
             /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion=10.0 `
+            /p:PlatformToolset=${{ steps.toolset.outputs.PLATFORM_TOOLSET }} `
+            /p:WindowsTargetPlatformVersion=${{ steps.sdk.outputs.SDK_VERSION }} `
             /m `
             /t:EfiDSEFix
-        shell: pwsh
 
       - name: List build outputs
-        run: |
-          Get-ChildItem -Path "Application/EfiDSEFix/bin" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue
         shell: pwsh
+        run: |
+          if (Test-Path "Application/EfiDSEFix/bin") {
+            Get-ChildItem -Path "Application/EfiDSEFix/bin" -Recurse -Filter "*.exe"
+          } else {
+            Write-Host "Build output directory not found, searching whole repo..."
+            Get-ChildItem -Path "." -Recurse -Filter "EfiDSEFix.exe" -ErrorAction SilentlyContinue
+          }
 
       - name: Upload EfiDSEFix artifact (RELEASE)
         if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
@@ -171,6 +213,7 @@ jobs:
           path: |
             Application/EfiDSEFix/bin/x64/Release/EfiDSEFix.exe
             Application/EfiDSEFix/bin/x64/Release/EfiDSEFix.pdb
+          if-no-files-found: warn
 
       - name: Upload EfiDSEFix artifact (DEBUG)
         if: ${{ inputs.build_configuration == 'DEBUG' || inputs.build_configuration == 'BOTH' }}
@@ -180,6 +223,7 @@ jobs:
           path: |
             Application/EfiDSEFix/bin/x64/Debug/EfiDSEFix.exe
             Application/EfiDSEFix/bin/x64/Debug/EfiDSEFix.pdb
+          if-no-files-found: warn
 
   # ============================================================
   # Job 3: 打包发布 (仅当用户手动勾选时触发)
