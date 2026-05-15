@@ -95,12 +95,32 @@ jobs:
       - name: Setup NASM
         uses: ilammy/setup-nasm@v1
 
-      - name: Build EDK2 BaseTools
+      - name: Build EDK2 BaseTools (Python + C tools)
         shell: cmd
         working-directory: edk2
         run: |
+          echo === Step 1: Run edksetup.bat ===
           call edksetup.bat Rebuild
           if errorlevel 1 exit /b 1
+          
+          echo.
+          echo === Step 2: Build C tools with nmake ===
+          pushd BaseTools\Source\C
+          nmake
+          if errorlevel 1 (
+            popd
+            exit /b 1
+          )
+          popd
+          
+          echo.
+          echo === Step 3: Verify tools ===
+          if not exist BaseTools\Bin\Win32\GenFw.exe (
+            echo ❌ GenFw.exe NOT FOUND after build
+            exit /b 1
+          )
+          echo ✅ BaseTools C utilities built successfully
+          dir BaseTools\Bin\Win32\*.exe
 
       - name: Build EfiGuard (RELEASE)
         if: ${{ inputs.build_configuration == 'RELEASE' || inputs.build_configuration == 'BOTH' }}
