@@ -16,13 +16,17 @@ on:
       edk2_version:
         description: 'EDK2 版本'
         required: true
-        default: 'edk2-stable202308'
+        default: 'edk2-stable202411'
         type: choice
         options:
           - edk2-stable202308
           - edk2-stable202311
           - edk2-stable202405
           - edk2-stable202408
+          - edk2-stable202411
+          - edk2-stable202502
+          - edk2-stable202505
+          - edk2-stable202508
       create_release:
         description: '是否创建 Release 发布'
         required: true
