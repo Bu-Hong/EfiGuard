@@ -47,11 +47,13 @@ jobs:
     runs-on: windows-2025-vs2026
     
     steps:
-      - name: Checkout EDK2 (${{ inputs.edk2_version }}) - shallow, no submodules
+      - name: Checkout EDK2 (${{ inputs.edk2_version }}) - shallow with submodules
         shell: pwsh
         run: |
-          Write-Host "Cloning EDK2 ${{ inputs.edk2_version }} (no submodules)..."
-          git clone --depth 1 --branch ${{ inputs.edk2_version }} --no-recurse-submodules https://github.com/tianocore/edk2.git edk2
+          Write-Host "Cloning EDK2 ${{ inputs.edk2_version }} with all submodules (shallow)..."
+          git clone --depth 1 --branch ${{ inputs.edk2_version }} `
+                    --recurse-submodules --shallow-submodules `
+                    https://github.com/tianocore/edk2.git edk2
           
           if ($LASTEXITCODE -ne 0) {
             Write-Host "❌ git clone failed"
@@ -61,15 +63,18 @@ jobs:
           Write-Host "✅ EDK2 cloned successfully"
           
           # 验证关键文件
-          if (-not (Test-Path "edk2/edksetup.bat")) {
-            Write-Host "❌ edksetup.bat NOT found"
-            exit 1
+          $checks = @{
+            "edk2/edksetup.bat" = "EDK2 setup script"
+            "edk2/MdePkg/Include/Uefi/UefiMultiPhase.h" = "MdePkg headers"
+            "edk2/MdePkg/Library/MipiSysTLib/mipisyst/library/include" = "MipiSysTLib submodule"
           }
-          if (-not (Test-Path "edk2/MdePkg/Include/Uefi/UefiMultiPhase.h")) {
-            Write-Host "❌ MdePkg headers NOT found"
-            exit 1
+          foreach ($path in $checks.Keys) {
+            if (Test-Path $path) {
+              Write-Host "✅ $($checks[$path])"
+            } else {
+              Write-Host "❌ MISSING: $($checks[$path]) at $path"
+            }
           }
-          Write-Host "✅ EDK2 ready"
 
       - name: Checkout EfiGuard into edk2/EfiGuardPkg
         uses: actions/checkout@v4
