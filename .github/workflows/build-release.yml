@@ -1,0 +1,57 @@
+name: Build and Release EfiDSEFix
+
+# 触发条件：tag推送时触发发布；也可按需开启push/PR触发构建
+on:
+  push:
+    tags:
+      - 'v*' # 仅当推送带v开头的tag时，触发发布流程
+  workflow_dispatch: # 支持手动触发构建
+
+jobs:
+  build:
+    runs-on: windows-latest # 必须用Windows runner来跑VS构建
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 拉取完整仓库历史（如果有子模块也能拉到）
+
+      # 安装 Visual Studio 构建工具（含MSBuild和必要组件）
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # 编译解决方案（按项目文档要求，构建EfiGuard.sln）
+      - name: Build EfiGuard.sln
+        run: |
+          msbuild "EfiGuard.sln" /p:Configuration=Release /p:Platform=x64 /m
+        shell: pwsh
+
+      # 收集输出文件（按文档，EfiDSEFix.exe在Application/EfiDSEFix/bin目录）
+      - name: Prepare artifacts
+        run: |
+          mkdir -p release
+          # 复制可执行文件到release目录
+          copy "Application\EfiDSEFix\bin\Release\EfiDSEFix.exe" release\
+          # 如需其他文件（如EFI文件、依赖），可在此添加复制命令
+          # 例如：copy "path\to\EfiGuardDxe.efi" release\
+        shell: pwsh
+
+      # 打包为ZIP文件
+      - name: Create ZIP package
+        run: |
+          Compress-Archive -Path release\* -DestinationPath "EfiDSEFix-${{ github.ref_name }}.zip"
+        shell: pwsh
+
+      # 发布到GitHub Releases
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') # 仅tag触发时执行发布
+        with:
+          files: "EfiDSEFix-${{ github.ref_name }}.zip"
+          name: "Release ${{ github.ref_name }}"
+          body: |
+            EfiDSEFix 构建发布版本 ${{ github.ref_name }}
+            - 编译环境：Visual Studio 2022 (GitHub Actions Windows Runner)
+            - 包含文件：EfiDSEFix.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
