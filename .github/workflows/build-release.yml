@@ -43,26 +43,11 @@ jobs:
     runs-on: windows-2025-vs2026
     
     steps:
-      - name: Checkout EfiGuard
-        uses: actions/checkout@v4
-        with:
-          path: edk2/EfiGuardPkg
-          submodules: recursive
-
       - name: Checkout EDK2 (${{ inputs.edk2_version }}) - shallow, no submodules
         shell: pwsh
         run: |
-          # 确保 workspace 目录存在
-          if (-not (Test-Path "workspace")) {
-            New-Item -ItemType Directory -Path "workspace" -Force | Out-Null
-          }
-          
-          Set-Location workspace
-          
-          Write-Host "Current directory: $(Get-Location)"
           Write-Host "Cloning EDK2 ${{ inputs.edk2_version }} (no submodules)..."
-          
-          git clone --depth 1 --branch ${{ inputs.edk2_version }} --no-recurse-submodules https://github.com/tianocore/edk2.git edk2-temp
+          git clone --depth 1 --branch ${{ inputs.edk2_version }} --no-recurse-submodules https://github.com/tianocore/edk2.git edk2
           
           if ($LASTEXITCODE -ne 0) {
             Write-Host "❌ git clone failed"
@@ -71,13 +56,22 @@ jobs:
           
           Write-Host "✅ EDK2 cloned successfully"
           
-          # 验证关键目录存在
-          if (Test-Path "edk2-temp/MdePkg/Include/Uefi/UefiMultiPhase.h") {
-            Write-Host "✅ MdePkg headers found"
-          } else {
+          # 验证关键文件
+          if (-not (Test-Path "edk2/edksetup.bat")) {
+            Write-Host "❌ edksetup.bat NOT found"
+            exit 1
+          }
+          if (-not (Test-Path "edk2/MdePkg/Include/Uefi/UefiMultiPhase.h")) {
             Write-Host "❌ MdePkg headers NOT found"
             exit 1
           }
+          Write-Host "✅ EDK2 ready"
+
+      - name: Checkout EfiGuard into edk2/EfiGuardPkg
+        uses: actions/checkout@v4
+        with:
+          path: edk2/EfiGuardPkg
+          submodules: recursive
 
       - name: Setup Python
         uses: actions/setup-python@v5
