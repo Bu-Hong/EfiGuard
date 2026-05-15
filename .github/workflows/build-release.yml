@@ -94,6 +94,31 @@ jobs:
 
       - name: Setup NASM
         uses: ilammy/setup-nasm@v1
+        
+      - name: Patch BaseTools Makefiles (remove /WX for newer MSVC compatibility)
+        shell: pwsh
+        working-directory: edk2
+        run: |
+          Write-Host "Patching BaseTools Makefiles to remove /WX..."
+          
+          $makefiles = @(
+            "BaseTools\Source\C\Makefiles\ms.common",
+            "BaseTools\Source\C\Makefiles\msft.makefile",
+            "BaseTools\Source\C\Makefiles\nmake.rules"
+          )
+          
+          foreach ($mf in $makefiles) {
+            if (Test-Path $mf) {
+              Write-Host "  Patching $mf"
+              $content = Get-Content $mf -Raw
+              # 移除 /WX (warnings as errors)
+              $patched = $content -replace '/WX\s', ' ' -replace '/WX$', ''
+              Set-Content -Path $mf -Value $patched -NoNewline
+              Write-Host "    ✅ Removed /WX"
+            } else {
+              Write-Host "  ⚠️ Not found: $mf"
+            }
+          }
 
       - name: Build EDK2 BaseTools (Python + C tools)
         shell: cmd
