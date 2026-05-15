@@ -10,116 +10,119 @@ jobs:
   build:
     runs-on: windows-latest
     env:
-      # 兼容 Node.js 20 弃用警告
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-      # EDK2 环境变量
-      WORKSPACE: ${{ github.workspace }}
-      EDK2_PATH: ${{ github.workspace }}\edk2
+      # 修正工作区路径，避免硬编码
+      WORKSPACE_ROOT: ${{ github.workspace }}
+      EDK2_DIR: ${{ github.workspace }}\edk2
+      EFIGUARD_PKG_DIR: ${{ github.workspace }}\EfiGuardPkg
     steps:
       - name: Checkout EfiGuard repository
         uses: actions/checkout@v4
         with:
           path: EfiGuardPkg
 
-      # 1. 安装 EDK2 依赖并编译 EFI 文件
+      # 1. 修复 EDK2 克隆问题（改用正确的稳定标签/分支）
       - name: Set up EDK2 environment
         run: |
-          # 克隆 EDK2 稳定版
-          git clone --recursive https://github.com/tianocore/edk2.git -b edk2-stable202403 ${{ env.EDK2_PATH }}
-          cd ${{ env.EDK2_PATH }}
+          # 改用最新的稳定标签（而非分支名），避免找不到的问题
+          git clone --recursive https://github.com/tianocore/edk2.git ${{ env.EDK2_DIR }}
+          cd ${{ env.EDK2_DIR }}
+          # 切换到一个存在的稳定标签，比如 edk2-stable202411
+          git checkout edk2-stable202411
           git submodule update --init --recursive
         shell: pwsh
 
-      - name: Install EDK2 build dependencies (Python, NASM)
+      # 2. 安装编译依赖
+      - name: Install build dependencies
         run: |
           choco install nasm -y
+          choco install python3 -y
           python -m pip install --upgrade pip
-          pip install setuptools
+          pip install setuptools wheel
         shell: pwsh
 
+      # 3. 构建 EDK2 BaseTools
       - name: Build EDK2 BaseTools
         run: |
-          cd ${{ env.EDK2_PATH }}
-          .\edksetup.bat --nt32
+          cd ${{ env.EDK2_DIR }}
+          call edksetup.bat --nt32
           nmake -C BaseTools
         shell: cmd
 
-      - name: Build EfiGuard EFI files (EDK2)
+      # 4. 编译 EFI 文件
+      - name: Build EfiGuard EFI files
         run: |
-          cd ${{ env.EDK2_PATH }}
-          .\edksetup.bat --nt32
-          build -a X64 -t VS2019 -p EfiGuardPkg\EfiGuardPkg.dsc -b RELEASE
+          cd ${{ env.EDK2_DIR }}
+          call edksetup.bat --nt32
+          build -a X64 -t VS2019 -p ${{ env.EFIGUARD_PKG_DIR }}\EfiGuardPkg.dsc -b RELEASE
         shell: cmd
-        env:
-          WORKSPACE: ${{ github.workspace }}
-        working-directory: ${{ github.workspace }}
 
-      # 2. 用 Visual Studio 编译 EfiDSEFix.exe
+      # 5. 编译 EfiDSEFix.exe
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
       - name: Restore NuGet packages
         run: |
-          nuget restore "EfiGuardPkg\EfiGuard.sln"
+          nuget restore "${{ env.EFIGUARD_PKG_DIR }}\EfiGuard.sln"
         shell: pwsh
 
-      - name: Build EfiDSEFix.exe (VS)
+      - name: Build EfiDSEFix.exe
         run: |
-          msbuild "EfiGuardPkg\EfiGuard.sln" `
+          msbuild "${{ env.EFIGUARD_PKG_DIR }}\EfiGuard.sln" `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /m `
-            /v:detailed
+            /v:minimal
         shell: pwsh
 
-      # 3. 收集所有编译产物
-      - name: Prepare all artifacts
+      # 6. 收集所有产物
+      - name: Prepare artifacts
         run: |
           mkdir -p release
           # 复制 EfiDSEFix.exe
-          if (Test-Path "EfiGuardPkg\Application\EfiDSEFix\bin\Release\EfiDSEFix.exe") {
-            copy "EfiGuardPkg\Application\EfiDSEFix\bin\Release\EfiDSEFix.exe" release\
+          $exePath = "${{ env.EFIGUARD_PKG_DIR }}\Application\EfiDSEFix\bin\Release\EfiDSEFix.exe"
+          if (Test-Path $exePath) {
+            copy $exePath release\
           } else {
-            Write-Error "❌ 找不到 EfiDSEFix.exe"
+            Write-Error "❌ 找不到 EfiDSEFix.exe: $exePath"
             exit 1
           }
-          # 复制 EDK2 编译的 EFI 文件
-          $efiDir = "${{ env.EDK2_PATH }}\Build\EfiGuard\RELEASE_VS2019\X64"
+          # 复制 EDK2 产物
+          $efiDir = "${{ env.EDK2_DIR }}\Build\EfiGuard\RELEASE_VS2019\X64"
           if (Test-Path "$efiDir\EfiGuardDxe.efi") {
             copy "$efiDir\EfiGuardDxe.efi" release\
           } else {
-            Write-Error "❌ 找不到 EfiGuardDxe.efi"
+            Write-Error "❌ 找不到 EfiGuardDxe.efi: $efiDir"
             exit 1
           }
           if (Test-Path "$efiDir\Loader.efi") {
             copy "$efiDir\Loader.efi" release\
           } else {
-            Write-Error "❌ 找不到 Loader.efi"
+            Write-Error "❌ 找不到 Loader.efi: $efiDir"
             exit 1
           }
-          # 列出所有文件确认
           dir release\
         shell: pwsh
 
-      # 4. 打包为 ZIP
+      # 7. 打包
       - name: Create ZIP package
         run: |
           Compress-Archive -Path release\* -DestinationPath "EfiGuard-Suite-${{ github.ref_name }}.zip"
         shell: pwsh
 
-      # 5. 发布到 Releases
-      - name: Create Release and Upload Asset
+      # 8. 发布
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: "EfiGuard-Suite-${{ github.ref_name }}.zip"
           name: "Release ${{ github.ref_name }}"
           body: |
-            EfiGuard Suite 构建发布版本 ${{ github.ref_name }}
-            - 编译环境：Windows-latest (VS2022 + EDK2 stable202403)
-            - 包含文件：
-              - EfiDSEFix.exe
-              - EfiGuardDxe.efi
-              - Loader.efi
+            ### EfiGuard Suite ${{ github.ref_name }}
+            - 编译环境: Windows-latest (VS2022 + EDK2 stable202411)
+            - 包含文件:
+              - `EfiDSEFix.exe`
+              - `EfiGuardDxe.efi`
+              - `Loader.efi`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
