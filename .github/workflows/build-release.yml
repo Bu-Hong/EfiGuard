@@ -20,22 +20,20 @@ jobs:
         with:
           path: EfiGuardPkg
 
-      # 1. 配置 Git 身份（解决 committer identity unknown 问题）
+      # 1. 配置 Git 身份
       - name: Configure Git identity
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
         shell: pwsh
 
-      # 2. 改用更轻量的 EDK2 下载方式，避免子模块问题
-      - name: Download pre-built EDK2 (stable202403)
+      # 2. 用浅克隆拉取 EDK2 主仓库（不包含子模块）
+      - name: Shallow clone EDK2
         run: |
-          # 直接下载官方预编译的 EDK2 压缩包，跳过子模块克隆
-          Invoke-WebRequest -Uri "https://github.com/tianocore/edk2/releases/download/edk2-stable202403/edk2-stable202403-windows-x86_64.zip" -OutFile "edk2.zip"
-          Expand-Archive -Path "edk2.zip" -DestinationPath ${{ env.EDK2_DIR }}
-          # 调整目录结构，确保 edksetup.bat 能被找到
-          Move-Item -Path "${{ env.EDK2_DIR }}\edk2-stable202403\*" -Destination "${{ env.EDK2_DIR }}\"
-          Remove-Item -Path "${{ env.EDK2_DIR }}\edk2-stable202403" -Recurse -Force
+          git clone --depth 1 --branch edk2-stable202411 https://github.com/tianocore/edk2.git ${{ env.EDK2_DIR }}
+          cd ${{ env.EDK2_DIR }}
+          # 仅拉取构建必须的子模块，跳过其他大型子模块
+          git submodule update --init --recursive --depth 1 --recommend-shallow BaseTools
         shell: pwsh
 
       # 3. 安装编译依赖
@@ -47,11 +45,12 @@ jobs:
           pip install setuptools wheel
         shell: pwsh
 
-      # 4. 初始化 EDK2 环境
-      - name: Initialize EDK2 environment
+      # 4. 构建 EDK2 BaseTools
+      - name: Build EDK2 BaseTools
         run: |
           cd ${{ env.EDK2_DIR }}
           call edksetup.bat --nt32
+          nmake -C BaseTools
         shell: cmd
 
       # 5. 编译 EFI 文件
@@ -124,7 +123,7 @@ jobs:
           name: "Release ${{ github.ref_name }}"
           body: |
             ### EfiGuard Suite ${{ github.ref_name }}
-            - 编译环境: Windows-latest (VS2022 + EDK2 stable202403)
+            - 编译环境: Windows-latest (VS2022 + EDK2 stable202411)
             - 包含文件:
               - `EfiDSEFix.exe`
               - `EfiGuardDxe.efi`
