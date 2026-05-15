@@ -39,8 +39,8 @@ jobs:
   # Job 1: 使用 EDK2 构建 EfiGuardDxe.efi 和 Loader.efi
   # ============================================================
   build-efi:
-    name: Build EFI Modules (EDK2 + VS2019)
-    runs-on: windows-2019
+    name: Build EFI Modules (EDK2 + VS2026)
+    runs-on: windows-2025-vs2026
     
     steps:
       - name: Checkout EfiGuard
