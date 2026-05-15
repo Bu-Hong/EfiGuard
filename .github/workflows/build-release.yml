@@ -1,57 +1,125 @@
-name: Build and Release EfiDSEFix
+name: Build and Release EfiGuard Suite
 
-# 触发条件：tag推送时触发发布；也可按需开启push/PR触发构建
 on:
   push:
     tags:
-      - 'v*' # 仅当推送带v开头的tag时，触发发布流程
-  workflow_dispatch: # 支持手动触发构建
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest # 必须用Windows runner来跑VS构建
+    runs-on: windows-latest
+    env:
+      # 兼容 Node.js 20 弃用警告
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+      # EDK2 环境变量
+      WORKSPACE: ${{ github.workspace }}
+      EDK2_PATH: ${{ github.workspace }}\edk2
     steps:
-      - name: Checkout repository
+      - name: Checkout EfiGuard repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 拉取完整仓库历史（如果有子模块也能拉到）
+          path: EfiGuardPkg
 
-      # 安装 Visual Studio 构建工具（含MSBuild和必要组件）
+      # 1. 安装 EDK2 依赖并编译 EFI 文件
+      - name: Set up EDK2 environment
+        run: |
+          # 克隆 EDK2 稳定版
+          git clone --recursive https://github.com/tianocore/edk2.git -b edk2-stable202403 ${{ env.EDK2_PATH }}
+          cd ${{ env.EDK2_PATH }}
+          git submodule update --init --recursive
+        shell: pwsh
+
+      - name: Install EDK2 build dependencies (Python, NASM)
+        run: |
+          choco install nasm -y
+          python -m pip install --upgrade pip
+          pip install setuptools
+        shell: pwsh
+
+      - name: Build EDK2 BaseTools
+        run: |
+          cd ${{ env.EDK2_PATH }}
+          .\edksetup.bat --nt32
+          nmake -C BaseTools
+        shell: cmd
+
+      - name: Build EfiGuard EFI files (EDK2)
+        run: |
+          cd ${{ env.EDK2_PATH }}
+          .\edksetup.bat --nt32
+          build -a X64 -t VS2019 -p EfiGuardPkg\EfiGuardPkg.dsc -b RELEASE
+        shell: cmd
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        working-directory: ${{ github.workspace }}
+
+      # 2. 用 Visual Studio 编译 EfiDSEFix.exe
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # 编译解决方案（按项目文档要求，构建EfiGuard.sln）
-      - name: Build EfiGuard.sln
+      - name: Restore NuGet packages
         run: |
-          msbuild "EfiGuard.sln" /p:Configuration=Release /p:Platform=x64 /m
+          nuget restore "EfiGuardPkg\EfiGuard.sln"
         shell: pwsh
 
-      # 收集输出文件（按文档，EfiDSEFix.exe在Application/EfiDSEFix/bin目录）
-      - name: Prepare artifacts
+      - name: Build EfiDSEFix.exe (VS)
+        run: |
+          msbuild "EfiGuardPkg\EfiGuard.sln" `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m `
+            /v:detailed
+        shell: pwsh
+
+      # 3. 收集所有编译产物
+      - name: Prepare all artifacts
         run: |
           mkdir -p release
-          # 复制可执行文件到release目录
-          copy "Application\EfiDSEFix\bin\Release\EfiDSEFix.exe" release\
-          # 如需其他文件（如EFI文件、依赖），可在此添加复制命令
-          # 例如：copy "path\to\EfiGuardDxe.efi" release\
+          # 复制 EfiDSEFix.exe
+          if (Test-Path "EfiGuardPkg\Application\EfiDSEFix\bin\Release\EfiDSEFix.exe") {
+            copy "EfiGuardPkg\Application\EfiDSEFix\bin\Release\EfiDSEFix.exe" release\
+          } else {
+            Write-Error "❌ 找不到 EfiDSEFix.exe"
+            exit 1
+          }
+          # 复制 EDK2 编译的 EFI 文件
+          $efiDir = "${{ env.EDK2_PATH }}\Build\EfiGuard\RELEASE_VS2019\X64"
+          if (Test-Path "$efiDir\EfiGuardDxe.efi") {
+            copy "$efiDir\EfiGuardDxe.efi" release\
+          } else {
+            Write-Error "❌ 找不到 EfiGuardDxe.efi"
+            exit 1
+          }
+          if (Test-Path "$efiDir\Loader.efi") {
+            copy "$efiDir\Loader.efi" release\
+          } else {
+            Write-Error "❌ 找不到 Loader.efi"
+            exit 1
+          }
+          # 列出所有文件确认
+          dir release\
         shell: pwsh
 
-      # 打包为ZIP文件
+      # 4. 打包为 ZIP
       - name: Create ZIP package
         run: |
-          Compress-Archive -Path release\* -DestinationPath "EfiDSEFix-${{ github.ref_name }}.zip"
+          Compress-Archive -Path release\* -DestinationPath "EfiGuard-Suite-${{ github.ref_name }}.zip"
         shell: pwsh
 
-      # 发布到GitHub Releases
+      # 5. 发布到 Releases
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') # 仅tag触发时执行发布
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: "EfiDSEFix-${{ github.ref_name }}.zip"
+          files: "EfiGuard-Suite-${{ github.ref_name }}.zip"
           name: "Release ${{ github.ref_name }}"
           body: |
-            EfiDSEFix 构建发布版本 ${{ github.ref_name }}
-            - 编译环境：Visual Studio 2022 (GitHub Actions Windows Runner)
-            - 包含文件：EfiDSEFix.exe
+            EfiGuard Suite 构建发布版本 ${{ github.ref_name }}
+            - 编译环境：Windows-latest (VS2022 + EDK2 stable202403)
+            - 包含文件：
+              - EfiDSEFix.exe
+              - EfiGuardDxe.efi
+              - Loader.efi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
