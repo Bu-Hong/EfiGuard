@@ -49,13 +49,21 @@ jobs:
           path: edk2/EfiGuardPkg
           submodules: recursive
 
-      - name: Checkout EDK2 (${{ inputs.edk2_version }})
-        uses: actions/checkout@v4
-        with:
-          repository: tianocore/edk2
-          ref: ${{ inputs.edk2_version }}
-          path: edk2
-          submodules: recursive
+      - name: Checkout EDK2 (${{ inputs.edk2_version }}) - shallow, no submodules
+        shell: pwsh
+        working-directory: workspace
+        run: |
+          Write-Host "Cloning EDK2 ${{ inputs.edk2_version }} (no submodules)..."
+          git clone --depth 1 --branch ${{ inputs.edk2_version }} --no-recurse-submodules https://github.com/tianocore/edk2.git edk2-temp
+          Write-Host "✅ EDK2 cloned successfully"
+          
+          # 验证关键目录存在
+          if (Test-Path "edk2-temp/MdePkg/Include/Uefi/UefiMultiPhase.h") {
+            Write-Host "✅ MdePkg headers found"
+          } else {
+            Write-Host "❌ MdePkg headers NOT found"
+            exit 1
+          }
 
       - name: Setup Python
         uses: actions/setup-python@v5
