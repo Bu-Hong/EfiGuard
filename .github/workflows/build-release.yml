@@ -51,10 +51,24 @@ jobs:
 
       - name: Checkout EDK2 (${{ inputs.edk2_version }}) - shallow, no submodules
         shell: pwsh
-        working-directory: workspace
         run: |
+          # 确保 workspace 目录存在
+          if (-not (Test-Path "workspace")) {
+            New-Item -ItemType Directory -Path "workspace" -Force | Out-Null
+          }
+          
+          Set-Location workspace
+          
+          Write-Host "Current directory: $(Get-Location)"
           Write-Host "Cloning EDK2 ${{ inputs.edk2_version }} (no submodules)..."
+          
           git clone --depth 1 --branch ${{ inputs.edk2_version }} --no-recurse-submodules https://github.com/tianocore/edk2.git edk2-temp
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ git clone failed"
+            exit 1
+          }
+          
           Write-Host "✅ EDK2 cloned successfully"
           
           # 验证关键目录存在
